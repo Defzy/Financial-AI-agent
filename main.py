@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import datetime
@@ -6,24 +5,25 @@ import openai
 import yfinance as yf
 
 # --- CONFIG ---
-BUDGET = 1000  # Example monthly budget
-SAVINGS_GOAL = 300  # Example monthly savings goal
-
+BUDGET = 1000
+SAVINGS_GOAL = 300
 openai.api_key = st.secrets["openai_api_key"]
 
-# --- DATA FILES ---
+# --- FILES ---
 EXPENSES_FILE = "data/expenses.csv"
 INVESTMENTS_FILE = "data/investments.csv"
 
-# --- INITIAL SETUP ---
+# --- SETUP ---
 st.set_page_config(page_title="Finance Agent", layout="wide")
 st.title("💸 Personal Finance & Investment Tracker")
 
 # --- LOAD DATA ---
 def load_expenses():
     try:
-        return pd.read_csv(EXPENSES_FILE, parse_dates=['date'])
-    except:
+        df = pd.read_csv(EXPENSES_FILE)
+        df['date'] = pd.to_datetime(df['date']).dt.date
+        return df
+    except Exception as e:
         return pd.DataFrame(columns=['date', 'category', 'amount'])
 
 def load_investments():
@@ -52,9 +52,11 @@ with st.form("add_expense"):
         expenses.to_csv(EXPENSES_FILE, index=False)
         st.success("Expense added!")
 
-# --- SUMMARY ---
+# --- WEEKLY SUMMARY ---
 st.header("📊 Weekly Summary")
-weekly = expenses[expenses['date'] >= (datetime.date.today() - datetime.timedelta(days=7))]
+today = datetime.date.today()
+seven_days_ago = today - datetime.timedelta(days=7)
+weekly = expenses[expenses['date'] >= seven_days_ago].copy()
 total_spent = weekly['amount'].sum()
 savings = BUDGET - total_spent
 
@@ -73,35 +75,41 @@ for _, row in investments.iterrows():
     ticker = yf.Ticker(symbol)
     try:
         price = ticker.history(period="1d")["Close"].iloc[-1]
+        current_value = invested  # Optioneel: prijs x aantal kopen
         investment_data.append({
             "Symbol": symbol,
             "Invested (€)": invested,
             "Current Price (€)": round(price, 2),
-            "Current Value (€)": round(price, 2)
+            "Current Value (€)": round(price, 2)  # Placeholder: je zou hier aandelen x prijs doen
         })
-        total_value += price
+        total_value += price  # Of: current_value
     except:
         continue
 if investment_data:
     st.dataframe(pd.DataFrame(investment_data))
     st.write(f"💼 Total portfolio value: €{total_value:.2f}")
 
-# --- AI INSIGHTS ---
+# --- AI FEEDBACK ---
 st.header("🤖 Smart Weekly Feedback")
-def generate_feedback(expenses, total_spent, savings):
-    text = f"This week, you spent €{total_spent:.2f}. Your savings are €{savings:.2f}. Expenses by category: {expenses['category'].value_counts().to_dict()}"
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You're a friendly personal finance coach."},
-            {"role": "user", "content": text}
-        ]
-    )
-    return response.choices[0].message.content
 
-if len(weekly) > 0:
+def generate_feedback(expenses, total_spent, savings):
+    try:
+        text = f"This week, you spent €{total_spent:.2f}. Your savings are €{savings:.2f}. Expenses by category: {expenses['category'].value_counts().to_dict()}."
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You're a friendly personal finance coach."},
+                {"role": "user", "content": text}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return "Unable to generate feedback. Please check your OpenAI setup."
+
+if not weekly.empty:
     with st.spinner("Analyzing your week..."):
         feedback = generate_feedback(weekly, total_spent, savings)
         st.success(feedback)
 else:
     st.info("Add some expenses to get feedback.")
+
