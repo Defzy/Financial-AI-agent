@@ -65,6 +65,21 @@ col1.metric("Total Spent (This Week)", f"€{total_spent:.2f}")
 col2.metric("Remaining Budget", f"€{BUDGET - total_spent:.2f}")
 col3.metric("Progress to Savings Goal", f"€{savings:.2f} / €{SAVINGS_GOAL}")
 
+# --- ADD INVESTMENT ---
+st.header("➕ Add Investment")
+with st.form("add_investment"):
+    col1, col2 = st.columns(2)
+    with col1:
+        symbol = st.text_input("Stock Symbol (e.g. AAPL, TSLA, MSFT)")
+    with col2:
+        amount_invested = st.number_input("Amount Invested (€)", min_value=0.0, step=1.0)
+    inv_submitted = st.form_submit_button("Add Investment")
+    if inv_submitted and symbol:
+        new_inv = pd.DataFrame([[symbol.upper(), amount_invested]], columns=investments.columns)
+        investments = pd.concat([investments, new_inv], ignore_index=True)
+        investments.to_csv(INVESTMENTS_FILE, index=False)
+        st.success(f"Investment in {symbol.upper()} added!")
+
 # --- INVESTMENTS ---
 st.header("📈 Investment Tracker")
 investment_data = []
@@ -75,14 +90,14 @@ for _, row in investments.iterrows():
     ticker = yf.Ticker(symbol)
     try:
         price = ticker.history(period="1d")["Close"].iloc[-1]
-        current_value = invested  # Optioneel: prijs x aantal kopen
+        current_value = price  # Placeholder: kun je vermenigvuldigen met gekocht aantal als je dat opslaat
         investment_data.append({
             "Symbol": symbol,
             "Invested (€)": invested,
             "Current Price (€)": round(price, 2),
-            "Current Value (€)": round(price, 2)  # Placeholder: je zou hier aandelen x prijs doen
+            "Current Value (€)": round(current_value, 2)
         })
-        total_value += price  # Of: current_value
+        total_value += current_value
     except:
         continue
 if investment_data:
@@ -92,14 +107,27 @@ if investment_data:
 # --- AI FEEDBACK ---
 st.header("🤖 Smart Weekly Feedback")
 
-def generate_feedback(expenses, total_spent, savings):
+def generate_feedback(expenses, total_spent, savings, investments_df, total_portfolio_value):
     try:
-        text = f"This week, you spent €{total_spent:.2f}. Your savings are €{savings:.2f}. Expenses by category: {expenses['category'].value_counts().to_dict()}."
+        exp_by_category = expenses.groupby("category")["amount"].sum().to_dict()
+        inv_summary = ", ".join(
+            f"{row['symbol']} (€{row['amount_invested']})"
+            for _, row in investments_df.iterrows()
+        )
+
+        prompt = (
+            f"This week, you spent €{total_spent:.2f} and saved €{savings:.2f}. "
+            f"Your expenses per category: {exp_by_category}. "
+            f"You also invested in: {inv_summary}. "
+            f"Total portfolio value: €{total_portfolio_value:.2f}. "
+            f"Give helpful weekly feedback including tips or suggestions."
+        )
+
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You're a friendly personal finance coach."},
-                {"role": "user", "content": text}
+                {"role": "system", "content": "You're a friendly and smart personal finance coach."},
+                {"role": "user", "content": prompt}
             ]
         )
         return response.choices[0].message.content
@@ -108,7 +136,7 @@ def generate_feedback(expenses, total_spent, savings):
 
 if not weekly.empty:
     with st.spinner("Analyzing your week..."):
-        feedback = generate_feedback(weekly, total_spent, savings)
+        feedback = generate_feedback(weekly, total_spent, savings, investments, total_value)
         st.success(feedback)
 else:
     st.info("Add some expenses to get feedback.")
