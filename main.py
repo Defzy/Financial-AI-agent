@@ -3,6 +3,8 @@ import pandas as pd
 import datetime
 import openai
 import yfinance as yf
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIG ---
 BUDGET = 1000
@@ -11,29 +13,42 @@ openai.api_key = st.secrets["openai_api_key"]
 
 # --- FILES ---
 EXPENSES_FILE = "data/expenses.csv"
-INVESTMENTS_FILE = "data/investments.csv"
+GOOGLE_SHEET_NAME = "FinanceTracker-Investments"
 
 # --- SETUP ---
 st.set_page_config(page_title="Finance Agent", layout="wide")
 st.title("💸 Personal Finance & Investment Tracker")
 
-# --- LOAD DATA ---
+# --- LOAD EXPENSES FROM CSV ---
 def load_expenses():
     try:
         df = pd.read_csv(EXPENSES_FILE)
         df['date'] = pd.to_datetime(df['date']).dt.date
         return df
-    except Exception as e:
+    except:
         return pd.DataFrame(columns=['date', 'category', 'amount'])
 
-def load_investments():
-    try:
-        return pd.read_csv(INVESTMENTS_FILE)
-    except:
-        return pd.DataFrame(columns=['symbol', 'amount_invested'])
+# --- LOAD INVESTMENTS FROM GOOGLE SHEETS ---
+@st.cache_resource
+def load_google_sheet(sheet_name):
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name("gcredentials.json", scope)
+    client = gspread.authorize(creds)
+    sheet = client.open(sheet_name).sheet1
+    data = sheet.get_all_records()
+    return pd.DataFrame(data)
 
+# --- SAVE TO GOOGLE SHEETS ---
+def add_investment_to_sheet(symbol, amount):
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name("gcredentials.json", scope)
+    client = gspread.authorize(creds)
+    sheet = client.open(GOOGLE_SHEET_NAME).sheet1
+    sheet.append_row([symbol, amount])
+
+# --- LOAD DATA ---
 expenses = load_expenses()
-investments = load_investments()
+investments = load_google_sheet(GOOGLE_SHEET_NAME)
 
 # --- ADD EXPENSE ---
 st.header("➕ Add Weekly Expense")
@@ -66,21 +81,19 @@ col2.metric("Remaining Budget", f"€{BUDGET - total_spent:.2f}")
 col3.metric("Progress to Savings Goal", f"€{savings:.2f} / €{SAVINGS_GOAL}")
 
 # --- ADD INVESTMENT ---
-st.header("➕ Add Investment")
+st.header("💹 Add Investment")
 with st.form("add_investment"):
     col1, col2 = st.columns(2)
     with col1:
-        symbol = st.text_input("Stock Symbol (e.g. AAPL, TSLA, MSFT)")
+        symbol = st.text_input("Stock Symbol (e.g. AAPL)")
     with col2:
-        amount_invested = st.number_input("Amount Invested (€)", min_value=0.0, step=1.0)
-    inv_submitted = st.form_submit_button("Add Investment")
-    if inv_submitted and symbol:
-        new_inv = pd.DataFrame([[symbol.upper(), amount_invested]], columns=investments.columns)
-        investments = pd.concat([investments, new_inv], ignore_index=True)
-        investments.to_csv(INVESTMENTS_FILE, index=False)
+        amount = st.number_input("Amount Invested (€)", min_value=0.0, step=0.01)
+    invest_submit = st.form_submit_button("Add Investment")
+    if invest_submit and symbol and amount > 0:
+        add_investment_to_sheet(symbol.upper(), amount)
         st.success(f"Investment in {symbol.upper()} added!")
 
-# --- INVESTMENTS ---
+# --- INVESTMENT TRACKER ---
 st.header("📈 Investment Tracker")
 investment_data = []
 total_value = 0.0
@@ -90,14 +103,14 @@ for _, row in investments.iterrows():
     ticker = yf.Ticker(symbol)
     try:
         price = ticker.history(period="1d")["Close"].iloc[-1]
-        current_value = price  # Placeholder: kun je vermenigvuldigen met gekocht aantal als je dat opslaat
+        current_value = invested  # Placeholder logic
         investment_data.append({
             "Symbol": symbol,
             "Invested (€)": invested,
             "Current Price (€)": round(price, 2),
-            "Current Value (€)": round(current_value, 2)
+            "Current Value (€)": round(price, 2)  # Can multiply with quantity
         })
-        total_value += current_value
+        total_value += price
     except:
         continue
 if investment_data:
@@ -107,37 +120,40 @@ if investment_data:
 # --- AI FEEDBACK ---
 st.header("🤖 Smart Weekly Feedback")
 
-def generate_feedback(expenses, total_spent, savings, investments_df, total_portfolio_value):
+def generate_feedback(expenses, total_spent, savings):
     try:
-        exp_by_category = expenses.groupby("category")["amount"].sum().to_dict()
-        inv_summary = ", ".join(
-            f"{row['symbol']} (€{row['amount_invested']})"
-            for _, row in investments_df.iterrows()
-        )
-
-        prompt = (
-            f"This week, you spent €{total_spent:.2f} and saved €{savings:.2f}. "
-            f"Your expenses per category: {exp_by_category}. "
-            f"You also invested in: {inv_summary}. "
-            f"Total portfolio value: €{total_portfolio_value:.2f}. "
-            f"Give helpful weekly feedback including tips or suggestions."
-        )
-
+        text = f"This week, you spent €{total_spent:.2f}. Your savings are €{savings:.2f}. Expenses by category: {expenses['category'].value_counts().to_dict()}."
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You're a friendly and smart personal finance coach."},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": "You're a friendly personal finance coach."},
+                {"role": "user", "content": text}
             ]
         )
         return response.choices[0].message.content
-    except Exception as e:
+    except:
         return "Unable to generate feedback. Please check your OpenAI setup."
 
 if not weekly.empty:
     with st.spinner("Analyzing your week..."):
-        feedback = generate_feedback(weekly, total_spent, savings, investments, total_value)
+        feedback = generate_feedback(weekly, total_spent, savings)
         st.success(feedback)
 else:
     st.info("Add some expenses to get feedback.")
 
+# --- CHAT FUNCTION ---
+st.header("💬 Ask the Finance Bot")
+
+user_input = st.text_input("Ask me anything about your finances or investments:")
+if user_input:
+    try:
+        chat_response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a smart, friendly financial assistant. Answer clearly and helpfully."},
+                {"role": "user", "content": user_input}
+            ]
+        )
+        st.success(chat_response.choices[0].message.content)
+    except:
+        st.error("Chat failed. Check OpenAI API key.")
