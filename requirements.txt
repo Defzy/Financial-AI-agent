@@ -1,4 +1,6 @@
 streamlit
 pandas
-yfinance
 openai
+yfinance
+gspread
+oauth2client
