@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import datetime
-import openai  # Updated for OpenAI API v1.0+
+import openai
 import yfinance as yf
 import os
 
@@ -10,6 +10,8 @@ BUDGET = 1000
 SAVINGS_GOAL = 300
 # Initialize OpenAI client
 client = openai.OpenAI(api_key=st.secrets.get("openai_api_key", ""))
+# Use GPT-3.5-turbo instead of GPT-4 for wider accessibility
+AI_MODEL = "gpt-3.5-turbo"
 
 # --- FILES ---
 EXPENSES_FILE = "data/expenses.csv"
@@ -180,7 +182,7 @@ if not expenses.empty:
 else:
     st.info("No expenses recorded yet.")
 
-# --- AI FEEDBACK --- (Updated for OpenAI v1.0+)
+# --- AI FEEDBACK --- (Updated to use GPT-3.5-turbo)
 st.header("🤖 Smart Weekly Feedback")
 
 def generate_feedback(expenses, total_spent, savings, investments_data):
@@ -204,9 +206,9 @@ def generate_feedback(expenses, total_spent, savings, investments_data):
         # Combined prompt
         prompt = f"{expense_summary} {investment_summary} Please provide friendly financial advice based on this information."
         
-        # Updated OpenAI API call for v1.0+
+        # Updated to use GPT-3.5-turbo
         response = client.chat.completions.create(
-            model="gpt-4",
+            model=AI_MODEL,
             messages=[
                 {"role": "system", "content": "You're a friendly personal finance coach. Provide concise, actionable advice."},
                 {"role": "user", "content": prompt}
@@ -223,7 +225,7 @@ if not weekly.empty or not investments.empty:
 else:
     st.info("Add some expenses or investments to get personalized feedback.")
 
-# --- CHAT FUNCTION --- (Updated for OpenAI v1.0+)
+# --- CHAT FUNCTION --- (Updated to use GPT-3.5-turbo)
 st.header("💬 Ask the Finance Bot")
 
 if 'chat_history' not in st.session_state:
@@ -239,9 +241,9 @@ if user_input:
         context += f" You have investments in: {', '.join(investments['symbol'].unique())}."
     
     try:
-        # Updated OpenAI API call for v1.0+
+        # Updated to use GPT-3.5-turbo
         chat_response = client.chat.completions.create(
-            model="gpt-4",
+            model=AI_MODEL,
             messages=[
                 {"role": "system", "content": f"You are a smart, friendly financial assistant. Answer clearly and helpfully based on this financial context: {context}"},
                 {"role": "user", "content": user_input}
